@@ -1,0 +1,90 @@
+name: RN App CI/CD
+
+on:
+  push:
+    branches: [ main ]
+  pull_request:
+    branches: [ main ]
+  workflow_dispatch:
+    inputs:
+      platform:
+        description: 'android | ios | all'
+        required: true
+        default: 'android'
+      profile:
+        description: 'EAS build profile (development | preview | production)'
+        required: true
+        default: 'production'
+      submit:
+        description: 'Submit to stores after build (true/false)'
+        required: false
+        default: 'false'
+
+jobs:
+  test:
+    name: Test RN App
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: rn-app
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 20
+          cache: npm
+          cache-dependency-path: rn-app/package-lock.json
+      - run: npm ci
+      - run: npm test --silent
+
+  build-deploy:
+    if: ${{ github.event_name == 'workflow_dispatch' }}
+    needs: test
+    name: Build and (optionally) Submit via EAS
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: rn-app
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 20
+          cache: npm
+          cache-dependency-path: rn-app/package-lock.json
+      - run: npm ci
+      - name: Install EAS CLI
+        run: npm i -g eas-cli
+      - name: EAS whoami
+        run: eas whoami
+        env:
+          EXPO_TOKEN: ${{ secrets.EXPO_TOKEN }}
+      - name: Build with EAS
+        env:
+          EXPO_TOKEN: ${{ secrets.EXPO_TOKEN }}
+        run: |
+          set -e
+          if [ "${{ github.event.inputs.platform }}" = "android" ]; then
+            eas build --platform android --profile ${{ github.event.inputs.profile }} --non-interactive
+          elif [ "${{ github.event.inputs.platform }}" = "ios" ]; then
+            eas build --platform ios --profile ${{ github.event.inputs.profile }} --non-interactive
+          else
+            eas build --platform android --profile ${{ github.event.inputs.profile }} --non-interactive
+            eas build --platform ios --profile ${{ github.event.inputs.profile }} --non-interactive
+          fi
+      - name: Submit to Stores (optional)
+        if: ${{ github.event.inputs.submit == 'true' }}
+        env:
+          EXPO_TOKEN: ${{ secrets.EXPO_TOKEN }}
+          GOOGLE_SERVICE_ACCOUNT_KEY: ${{ secrets.GOOGLE_SERVICE_ACCOUNT_KEY }}
+          APPLE_APP_SPECIFIC_PASSWORD: ${{ secrets.APPLE_APP_SPECIFIC_PASSWORD }}
+          APPLE_ID: ${{ secrets.APPLE_ID }}
+          APPLE_APP_ID: ${{ secrets.APPLE_APP_ID }}
+        run: |
+          set -e
+          if [ "${{ github.event.inputs.platform }}" = "android" ] || [ "${{ github.event.inputs.platform }}" = "all" ]; then
+            eas submit --platform android --latest --non-interactive
+          fi
+          if [ "${{ github.event.inputs.platform }}" = "ios" ] || [ "${{ github.event.inputs.platform }}" = "all" ]; then
+            eas submit --platform ios --latest --non-interactive
+          fi
